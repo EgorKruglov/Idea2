@@ -1,3 +1,4 @@
+~~~~sql
 -- Create the database
 CREATE DATABASE IF NOT EXISTS ecommerce_store;
 USE ecommerce_store;
@@ -205,3 +206,5 @@ Wishlists: For saving favorite products
 Relationships: Proper foreign key relationships between tables
 Timestamps: Created_at and updated_at fields for tracking changes
 Indexes: Added for better query performance
+
+~~~~
