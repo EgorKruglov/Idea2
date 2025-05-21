@@ -618,7 +618,604 @@ class Cart {
 ?>
 ~~~~
 
-Как использовать этот API
+~~~~bash
+npx create-react-app ecommerce-frontend
+cd ecommerce-frontend
+npm install axios react-router-dom @mui/material @mui/icons-material @emotion/react @emotion/styled
+~~~~
+
+Структура проекта
+src/
+├── components/
+│   ├── Header.js
+│   ├── ProductCard.js
+│   ├── CartItem.js
+│   └── AuthModal.js
+├── pages/
+│   ├── Home.js
+│   ├── Product.js
+│   ├── Cart.js
+│   └── Login.js
+├── context/
+│   ├── AuthContext.js
+│   └── CartContext.js
+├── services/
+│   ├── api.js
+│   └── auth.js
+├── App.js
+├── App.css
+└── index.js
+
+~~~~js
+src/services/api.js - Настройка API
+jsx
+import axios from 'axios';
+
+const API_BASE_URL = 'http://localhost'; // Замените на ваш URL бэкенда
+
+const api = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Добавляем интерцептор для JWT токена
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+export default api;
+src/context/AuthContext.js - Контекст аутентификации
+jsx
+import { createContext, useState, useEffect } from 'react';
+
+export const AuthContext = createContext();
+
+export const AuthProvider = ({ children }) => {
+  const [user, setUser] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const userId = localStorage.getItem('user_id');
+    
+    if (token && userId) {
+      setUser({ id: userId });
+      setIsAuthenticated(true);
+    }
+  }, []);
+
+  const login = (token, userId) => {
+    localStorage.setItem('token', token);
+    localStorage.setItem('user_id', userId);
+    setUser({ id: userId });
+    setIsAuthenticated(true);
+  };
+
+  const logout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user_id');
+    setUser(null);
+    setIsAuthenticated(false);
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, isAuthenticated, login, logout }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+src/context/CartContext.js - Контекст корзины
+jsx
+import { createContext, useState, useEffect, useContext } from 'react';
+import api from '../services/api';
+import { AuthContext } from './AuthContext';
+
+export const CartContext = createContext();
+
+export const CartProvider = ({ children }) => {
+  const [cart, setCart] = useState([]);
+  const [total, setTotal] = useState(0);
+  const { isAuthenticated, user } = useContext(AuthContext);
+
+  const fetchCart = async () => {
+    if (!isAuthenticated || !user) return;
+    
+    try {
+      const response = await api.get(`/cart?user_id=${user.id}`);
+      setCart(response.data.items);
+      setTotal(response.data.total);
+    } catch (error) {
+      console.error('Error fetching cart:', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchCart();
+  }, [isAuthenticated, user]);
+
+  const addToCart = async (productId, quantity = 1) => {
+    if (!isAuthenticated || !user) {
+      alert('Please login to add items to cart');
+      return;
+    }
+    
+    try {
+      await api.post('/cart', {
+        user_id: user.id,
+        product_id: productId,
+        quantity
+      });
+      await fetchCart();
+    } catch (error) {
+      console.error('Error adding to cart:', error);
+    }
+  };
+
+  const removeFromCart = async (productId) => {
+    try {
+      await api.delete(`/cart/${productId}?user_id=${user.id}`);
+      await fetchCart();
+    } catch (error) {
+      console.error('Error removing from cart:', error);
+    }
+  };
+
+  const clearCart = async () => {
+    try {
+      await api.delete(`/cart?user_id=${user.id}`);
+      setCart([]);
+      setTotal(0);
+    } catch (error) {
+      console.error('Error clearing cart:', error);
+    }
+  };
+
+  return (
+    <CartContext.Provider value={{ cart, total, addToCart, removeFromCart, clearCart, fetchCart }}>
+      {children}
+    </CartContext.Provider>
+  );
+};
+src/components/Header.js - Шапка сайта
+jsx
+import { AppBar, Toolbar, Typography, Button, Badge, IconButton } from '@mui/material';
+import ShoppingCartIcon from '@mui/icons-material/ShoppingCart';
+import { Link, useNavigate } from 'react-router-dom';
+import { useContext } from 'react';
+import { AuthContext } from '../context/AuthContext';
+import { CartContext } from '../context/CartContext';
+
+const Header = () => {
+  const { isAuthenticated, logout } = useContext(AuthContext);
+  const { cart } = useContext(CartContext);
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    logout();
+    navigate('/');
+  };
+
+  return (
+    <AppBar position="static">
+      <Toolbar>
+        <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+          <Link to="/" style={{ textDecoration: 'none', color: 'inherit' }}>
+            My Shop
+          </Link>
+        </Typography>
+        
+        {isAuthenticated ? (
+          <>
+            <Button color="inherit" onClick={handleLogout}>Logout</Button>
+            <IconButton color="inherit" component={Link} to="/cart">
+              <Badge badgeContent={cart.length} color="error">
+                <ShoppingCartIcon />
+              </Badge>
+            </IconButton>
+          </>
+        ) : (
+          <Button color="inherit" component={Link} to="/login">Login</Button>
+        )}
+      </Toolbar>
+    </AppBar>
+  );
+};
+
+export default Header;
+src/components/ProductCard.js - Карточка товара
+jsx
+import { Card, CardMedia, CardContent, Typography, Button, CardActions } from '@mui/material';
+import { useContext } from 'react';
+import { CartContext } from '../context/CartContext';
+
+const ProductCard = ({ product }) => {
+  const { addToCart } = useContext(CartContext);
+
+  return (
+    <Card sx={{ maxWidth: 345, height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <CardMedia
+        component="img"
+        height="140"
+        image={`https://via.placeholder.com/300?text=${product.name}`}
+        alt={product.name}
+      />
+      <CardContent sx={{ flexGrow: 1 }}>
+        <Typography gutterBottom variant="h5" component="div">
+          {product.name}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          {product.description}
+        </Typography>
+        <Typography variant="h6" mt={2}>
+          ${product.price}
+        </Typography>
+      </CardContent>
+      <CardActions>
+        <Button 
+          size="small" 
+          onClick={() => addToCart(product.product_id)}
+        >
+          Add to Cart
+        </Button>
+      </CardActions>
+    </Card>
+  );
+};
+
+export default ProductCard;
+src/pages/Home.js - Главная страница
+jsx
+import { useEffect, useState } from 'react';
+import { Grid, Container, TextField } from '@mui/material';
+import ProductCard from '../components/ProductCard';
+import api from '../services/api';
+
+const Home = () => {
+  const [products, setProducts] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  useEffect(() => {
+    const fetchProducts = async () => {
+      try {
+        const response = await api.get('/products');
+        setProducts(response.data);
+      } catch (error) {
+        console.error('Error fetching products:', error);
+      }
+    };
+
+    fetchProducts();
+  }, []);
+
+  const filteredProducts = products.filter(product =>
+    product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    product.description.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  return (
+    <Container sx={{ py: 4 }}>
+      <TextField
+        fullWidth
+        label="Search products"
+        variant="outlined"
+        margin="normal"
+        value={searchTerm}
+        onChange={(e) => setSearchTerm(e.target.value)}
+        sx={{ mb: 4 }}
+      />
+      
+      <Grid container spacing={4}>
+        {filteredProducts.map((product) => (
+          <Grid item key={product.product_id} xs={12} sm={6} md={4}>
+            <ProductCard product={product} />
+          </Grid>
+        ))}
+      </Grid>
+    </Container>
+  );
+};
+
+export default Home;
+src/pages/Product.js - Страница товара
+jsx
+import { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
+import { Container, Grid, Typography, Button, Box, Paper } from '@mui/material';
+import api from '../services/api';
+import { useContext } from 'react';
+import { CartContext } from '../context/CartContext';
+
+const Product = () => {
+  const { id } = useParams();
+  const [product, setProduct] = useState(null);
+  const { addToCart } = useContext(CartContext);
+
+  useEffect(() => {
+    const fetchProduct = async () => {
+      try {
+        const response = await api.get(`/products/${id}`);
+        setProduct(response.data);
+      } catch (error) {
+        console.error('Error fetching product:', error);
+      }
+    };
+
+    fetchProduct();
+  }, [id]);
+
+  if (!product) return <div>Loading...</div>;
+
+  return (
+    <Container sx={{ py: 4 }}>
+      <Grid container spacing={4}>
+        <Grid item xs={12} md={6}>
+          <Paper elevation={3} sx={{ p: 2 }}>
+            <img
+              src={`https://via.placeholder.com/600?text=${product.name}`}
+              alt={product.name}
+              style={{ width: '100%', height: 'auto' }}
+            />
+          </Paper>
+        </Grid>
+        <Grid item xs={12} md={6}>
+          <Typography variant="h3" gutterBottom>
+            {product.name}
+          </Typography>
+          <Typography variant="h5" color="text.secondary" gutterBottom>
+            ${product.price}
+          </Typography>
+          <Typography variant="body1" paragraph>
+            {product.description}
+          </Typography>
+          <Box mt={4}>
+            <Button
+              variant="contained"
+              size="large"
+              onClick={() => addToCart(product.product_id)}
+            >
+              Add to Cart
+            </Button>
+          </Box>
+        </Grid>
+      </Grid>
+    </Container>
+  );
+};
+
+export default Product;
+src/pages/Cart.js - Страница корзины
+jsx
+import { Container, Typography, Button, Grid, Paper, Box, Divider } from '@mui/material';
+import { useContext } from 'react';
+import { CartContext } from '../context/CartContext';
+import CartItem from '../components/CartItem';
+
+const Cart = () => {
+  const { cart, total, removeFromCart, clearCart } = useContext(CartContext);
+
+  if (cart.length === 0) {
+    return (
+      <Container sx={{ py: 4 }}>
+        <Typography variant="h4" gutterBottom>
+          Your cart is empty
+        </Typography>
+      </Container>
+    );
+  }
+
+  return (
+    <Container sx={{ py: 4 }}>
+      <Typography variant="h4" gutterBottom>
+        Shopping Cart
+      </Typography>
+      
+      <Grid container spacing={4}>
+        <Grid item xs={12} md={8}>
+          {cart.map((item) => (
+            <CartItem 
+              key={item.cart_item_id} 
+              item={item} 
+              onRemove={removeFromCart} 
+            />
+          ))}
+        </Grid>
+        <Grid item xs={12} md={4}>
+          <Paper elevation={3} sx={{ p: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Order Summary
+            </Typography>
+            <Divider sx={{ my: 2 }} />
+            <Box display="flex" justifyContent="space-between" mb={2}>
+              <Typography>Subtotal:</Typography>
+              <Typography>${total.toFixed(2)}</Typography>
+            </Box>
+            <Box display="flex" justifyContent="space-between" mb={2}>
+              <Typography>Shipping:</Typography>
+              <Typography>Free</Typography>
+            </Box>
+            <Divider sx={{ my: 2 }} />
+            <Box display="flex" justifyContent="space-between" mb={3}>
+              <Typography variant="h6">Total:</Typography>
+              <Typography variant="h6">${total.toFixed(2)}</Typography>
+            </Box>
+            <Button 
+              variant="contained" 
+              fullWidth 
+              size="large"
+              onClick={clearCart}
+            >
+              Checkout
+            </Button>
+          </Paper>
+        </Grid>
+      </Grid>
+    </Container>
+  );
+};
+
+export default Cart;
+src/pages/Login.js - Страница авторизации
+jsx
+import { useState } from 'react';
+import { Container, TextField, Button, Typography, Box, Link } from '@mui/material';
+import { useNavigate } from 'react-router-dom';
+import api from '../services/api';
+import { useContext } from 'react';
+import { AuthContext } from '../context/AuthContext';
+
+const Login = () => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isRegister, setIsRegister] = useState(false);
+  const [name, setName] = useState('');
+  const [error, setError] = useState('');
+  const navigate = useNavigate();
+  const { login } = useContext(AuthContext);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+
+    try {
+      if (isRegister) {
+        const response = await api.post('/users/register', {
+          username: email,
+          email,
+          password,
+          first_name: name
+        });
+        // После регистрации автоматически входим
+        await handleLogin(email, password);
+      } else {
+        await handleLogin(email, password);
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || 'An error occurred');
+    }
+  };
+
+  const handleLogin = async (email, password) => {
+    const response = await api.post('/users/login', { email, password });
+    login(response.data.token, response.data.user_id);
+    navigate('/');
+  };
+
+  return (
+    <Container maxWidth="xs" sx={{ py: 4 }}>
+      <Paper elevation={3} sx={{ p: 4 }}>
+        <Typography variant="h4" align="center" gutterBottom>
+          {isRegister ? 'Register' : 'Login'}
+        </Typography>
+        
+        {error && (
+          <Typography color="error" align="center" sx={{ mb: 2 }}>
+            {error}
+          </Typography>
+        )}
+        
+        <form onSubmit={handleSubmit}>
+          {isRegister && (
+            <TextField
+              label="Name"
+              variant="outlined"
+              fullWidth
+              margin="normal"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
+          )}
+          
+          <TextField
+            label="Email"
+            type="email"
+            variant="outlined"
+            fullWidth
+            margin="normal"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+          
+          <TextField
+            label="Password"
+            type="password"
+            variant="outlined"
+            fullWidth
+            margin="normal"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
+          
+          <Button
+            type="submit"
+            variant="contained"
+            fullWidth
+            size="large"
+            sx={{ mt: 3 }}
+          >
+            {isRegister ? 'Register' : 'Login'}
+          </Button>
+        </form>
+        
+        <Box mt={2} textAlign="center">
+          <Typography variant="body2">
+            {isRegister ? 'Already have an account? ' : "Don't have an account? "}
+            <Link 
+              component="button" 
+              variant="body2"
+              onClick={() => setIsRegister(!isRegister)}
+            >
+              {isRegister ? 'Login' : 'Register'}
+            </Link>
+          </Typography>
+        </Box>
+      </Paper>
+    </Container>
+  );
+};
+
+export default Login;
+src/App.js - Основной компонент приложения
+jsx
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { AuthProvider } from './context/AuthContext';
+import { CartProvider } from './context/CartContext';
+import Header from './components/Header';
+import Home from './pages/Home';
+import Product from './pages/Product';
+import Cart from './pages/Cart';
+import Login from './pages/Login';
+
+function App() {
+  return (
+    <Router>
+      <AuthProvider>
+        <CartProvider>
+          <Header />
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/product/:id" element={<Product />} />
+            <Route path="/cart" element={<Cart />} />
+            <Route path="/login" element={<Login />} />
+          </Routes>
+        </CartProvider>
+      </AuthProvider>
+    </Router>
+  );
+}
+
+export default App;
+~~~~
+
+
 Товары:
 GET /products - получить список товаров
 GET /products/1 - получить товар с ID=1
